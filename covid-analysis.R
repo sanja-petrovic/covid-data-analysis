@@ -1,3 +1,5 @@
+# DATA PREP
+
 library(sparklyr)
 library(dplyr)
 library(ggplot2)
@@ -22,6 +24,8 @@ covid.clean <- covid.clean %>%
     !is.na(res_state) &
     current_status == "Laboratory-confirmed case"
   )
+
+# INITIAL DATA ANALYSIS
 
 age_group_order <- c("0 - 17 years", "18 to 49 years", "50 to 64 years", "65+ years")
 
@@ -57,21 +61,24 @@ ggplot(age_group_outcomes_df, aes(x = case_count, y = death_count, label = age_g
   geom_text(vjust = -0.5, hjust = 0.5) +
   labs(title = "COVID-19 Cases vs Deaths by Age Group", x = "Number of Cases", y = "Number of Deaths") +
   theme_minimal() +
-  scale_y_continuous(labels = scales::comma)
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_continuous(labels = scales::comma)
 
 ggplot(age_group_outcomes_df, aes(x = case_count, y = icu_count, label = age_group)) +
   geom_point(size = 3) +
   geom_text(vjust = -0.5, hjust = 0.5) +
   labs(title = "COVID-19 Cases vs ICU admissions by Age Group", x = "Number of Cases", y = "Number of ICU admissions") +
   theme_minimal() +
-  scale_y_continuous(labels = scales::comma)
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_continuous(labels = scales::comma)
 
 ggplot(age_group_outcomes_df, aes(x = case_count, y = hosp_count, label = age_group)) +
   geom_point(size = 3) +
   geom_text(vjust = -0.5, hjust = 0.5) +
   labs(title = "COVID-19 Cases vs Hospitalizations by Age Group", x = "Number of Cases", y = "Number of Hospitalizations") +
   theme_minimal() +
-  scale_y_continuous(labels = scales::comma)
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_continuous(labels = scales::comma)
 
 covid.ca <- covid.clean %>%
   filter(res_state == "CA")
@@ -82,6 +89,7 @@ ca_monthly_summary <- covid.ca %>%
   arrange(case_month)
 
 ca_monthly_summary_df <- collect(ca_monthly_summary)
+ca_monthly_summary_df$case_month <- as.Date(paste0(ca_monthly_summary_df$case_month, "-01"), format = "%Y-%m-%d")
 
 ggplot(ca_monthly_summary_df, aes(x = case_month, y = case_count)) +
   geom_line(aes(group=1), color="blue") + geom_point(color="red") +
