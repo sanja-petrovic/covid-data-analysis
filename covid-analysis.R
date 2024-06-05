@@ -261,11 +261,6 @@ covid.patients <- covid.clean %>% head(500000) %>%
   select(age_group, sex, race, symptom_status, underlying_conditions_yn, hosp_yn, death_yn, icu_yn) %>%
   na.omit()
 
-# covid.split <- sdf_random_split(covid.patients, training = 0.75, test = 0.25, seed = 5)
-# 
-# covid.training <- covid.split$training
-# covid.test <- covid.split$test
-
 covid.class.formula <- death_yn ~ 
   age_group +
   sex +
@@ -274,35 +269,6 @@ covid.class.formula <- death_yn ~
   underlying_conditions_yn +
   hosp_yn + 
   icu_yn
-
-# logistic regression
-
-# за сваки метод класификације формирање класификационих модела за различите вредности параметара према три сценарија 
-# Pitanje: Tri scenarija - da li je to broj iteracija?
-covid.class.iters <- c(1, 3, 15)
-covid.class.model.accuracy.reg <- c(length(3))
-covid.class.model.precision.reg <- c(length(3))
-covid.class.model.f1.reg <- c(length(3))
-covid.class.model.recall.reg <- c(length(3))
-counter <- 0
-
-for (iter in covid.class.iters) {
-  counter <- counter + 1
-  log.reg <- ml_logistic_regression(
-    x = covid.training, 
-    formula = covid.class.formula,
-    family="binomial", max_iter = iter, threshold = 0.5)
-  
-  log.reg.eval <- ml_evaluate(log.reg, covid.test)
-  
-  covid.class.model.accuracy.reg[counter] <- log.reg.eval$accuracy()
-  covid.class.model.precision.reg[counter] <- log.reg.eval$weighted_precision()
-  covid.class.model.f1.reg[counter] <- log.reg.eval$weighted_f_measure()
-  covid.class.model.recall.reg[counter] <- log.reg.eval$weighted_recall()
-}
-
-# to do:  испитивање односа између вредности параметара и перформанси у класификацији
-# Pravljenje grafika koji poredi iteracije i accuracy
 
 # decision tree
 
@@ -372,15 +338,16 @@ covid.test <- list(
   s4 = covid.split$s4
 )
 
-iters <- c(1, 3, 10)
-ths <- c(0.5, 0.45, 0.55)
+iters <- c(1, 1, 1, 3, 3, 3, 10, 10, 10)
+ths <- c(0.5, 0.45, 0.55, 0.5, 0.45, 0.55, 0.5, 0.45, 0.55)
 covid.log.reg.accuracy <- list()
 covid.log.reg.f1 <- list()
 covid.log.reg.prec <- list()
 covid.log.reg.recall <- list()
 covid.log.reg.tp <- list()
 covid.log.reg.eval <- list()
-for(i in 1:3) {
+
+for(i in 1:1:length(iters)) {
   covid.log.reg.trained = list(s1=ml_logistic_regression(covid.training$s1, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i]),
                                s2=ml_logistic_regression(covid.training$s2, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i]),
                                s3=ml_logistic_regression(covid.training$s3, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i]),
@@ -397,6 +364,16 @@ for(i in 1:3) {
   covid.log.reg.f1[[i]] <- (covid.log.reg.eval.s1$weighted_f_measure() + covid.log.reg.eval.s2$weighted_f_measure() + covid.log.reg.eval.s3$weighted_f_measure() + covid.log.reg.eval.s4$weighted_f_measure()) / k
   covid.log.reg.recall[[i]] <- (covid.log.reg.eval.s1$weighted_recall() + covid.log.reg.eval.s2$weighted_recall() + covid.log.reg.eval.s3$weighted_recall() + covid.log.reg.eval.s4$weighted_recall()) / k
 }
+data <- data.frame(iter = iters, th = ths, accuracy = unlist(covid.log.reg.accuracy))
+ggplot(data, aes(x = iter, y = accuracy, color = as.factor(th))) +
+  geom_point(position = position_jitter(width = 0.1, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("#FF69B4", bright_blue, bright_green)) +
+  labs(title = "Logistic Regression Accuracy Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Accuracy",
+       color = "Threshold") +
+  theme_minimal()
 
 covid.dec.tree.trained = list(s1=ml_decision_tree_classifier(covid.training$s1, formula, min_instances_per_node = 1000, impurity = "gini"),
                              s2=ml_decision_tree_classifier(covid.training$s2, formula, min_instances_per_node = 1000, impurity = "gini"),
