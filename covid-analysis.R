@@ -4,15 +4,15 @@ library(sparklyr)
 library(dplyr)
 library(ggplot2)
 library(ggmosaic)
+library(reshape2)
+library(corrplot)
 
 
 sc <- spark_connect(master = "local")
 spark_get_java()
-# учитавање података
+
 covid.raw <- spark_read_csv(sc, name="covid", path=".")
 
-# уређивање учитаних података
-# испитивање присуства недостајућих вредности
 covid.clean <- covid.raw %>%
   mutate(across(c(where(is.character)), 
     ~ if_else(. == "Unknown" || . == "Missing" || . == "NA", NA, .),
@@ -30,7 +30,6 @@ covid.clean <- covid.clean %>%
 
 # INITIAL DATA ANALYSIS
 
-# израчунавање вредности дескриптивних статистика по појединачним обележјима
 sdf_describe(
   covid.clean %>% filter(case_positive_specimen_interval >= 0 & case_onset_interval >= 0), 
   cols=c("case_positive_specimen_interval", "case_onset_interval")
@@ -46,7 +45,6 @@ age_group_cases <- covid.clean %>%
 age_group_cases_df <- collect(age_group_cases)
 age_group_cases_df$age_group <- factor(age_group_cases_df$age_group, levels = age_group_order)
 
-# визуализовање расподеле по појединачним обележјима
 ggplot(age_group_cases_df, aes(x = reorder(age_group, -case_count), y = case_count)) +
   geom_bar(stat = "identity") +
   labs(title = "COVID-19 Cases by Age Group", x = "Age Group", y = "Number of Cases") +
@@ -65,7 +63,6 @@ age_group_outcomes_df <- collect(age_group_outcomes)
 
 age_group_outcomes_df$age_group <- factor(age_group_outcomes_df$age_group, levels = age_group_order)
 
-# визуализовање расподеле по појединачним обележјима
 ggplot(age_group_outcomes_df, aes(x = case_count, y = icu_count, label = age_group)) +
   geom_point(size = 3) +
   geom_text(vjust = -0.5, hjust = 0.5) +
@@ -85,7 +82,6 @@ ca_monthly_summary <- covid.ca %>%
 ca_monthly_summary_df <- collect(ca_monthly_summary)
 ca_monthly_summary_df$case_month <- as.Date(paste0(ca_monthly_summary_df$case_month, "-01"), format = "%Y-%m-%d")
 
-# визуализовање расподеле по појединачним обележјима
 ggplot(ca_monthly_summary_df, aes(x = case_month, y = case_count)) +
   geom_line(aes(group=1), color="blue") + geom_point(color="red") +
   labs(title = "COVID-19 Case Counts Over Time in California", x = "Month", y = "Number of Cases") +
@@ -117,7 +113,6 @@ covid.outcome_summary <- covid.clean %>%
 
 covid.outcome_summary_df <- collect(covid.outcome_summary)
 
-# испитивање односа између обележја -- Pitanje: Da li ovde treba dodati jos nesto? Npr. correlation matrix?
 ggplot(covid.outcome_summary_df, aes(x = age_group, y = percent, fill = outcome)) +
   geom_bar(stat = "identity", position = "fill", color = "white") +
   facet_wrap(~sex) +
@@ -212,21 +207,64 @@ ggplot(balloon_data %>% collect(), aes(x = age_group, y = sex, size = count, fil
     legend.text = element_text(size = 10)
   )  
 
+covid.numeric <- covid.clean %>% head(20000) %>%
+  mutate(
+    age_group_index = case_when(
+      age_group == "0 - 17 years" ~ 1,
+      age_group == "18 to 49 years" ~ 2,
+      age_group == "50 to 64 years" ~ 3,
+      age_group == "65+ years" ~ 4,
+      TRUE ~ NA_real_
+    ),
+    hosp_yn_index = case_when(
+      hosp_yn == "Yes" ~ 1,
+      hosp_yn == "No" ~ 0,
+      TRUE ~ NA_real_
+    ),
+    death_yn_index = case_when(
+      death_yn == "Yes" ~ 1,
+      death_yn == "No" ~ 0,
+      TRUE ~ NA_real_
+    ),
+    symptom_status_index = case_when(
+      symptom_status == "Symptomatic" ~ 1,
+      symptom_status == "Asymptomatic" ~ 0,
+      TRUE ~ NA_real_
+    ),
+    underlying_conditions_yn_index = case_when(
+      underlying_conditions_yn == "Yes" ~ 1,
+      underlying_conditions_yn == "No" ~ 0,
+      TRUE ~ NA_real_
+    )
+  )
+
+covid.numeric <- covid.numeric %>%
+  select(
+    age_group_index,
+    hosp_yn_index,
+    death_yn_index,
+    symptom_status_index,
+    underlying_conditions_yn_index
+  ) %>%
+  na.omit()
+
+
+# Calculate the correlation matrix
+covid.correlation <- cor(covid.numeric %>% collect())
+
+corrplot(covid.correlation, method = "color", type = "upper", tl.col = "black", tl.srt = 45, addCoef.col = "black", number.cex = 0.7)
+
 
 # CLASSIFICATION
 
-# формирање класификационих модела за исто циљно обележје применом три
-# различита метода класификације и оцењивање перформанси у
-# класификацији | logisticka regresija, stabla odlucivanja, masina potpornih vektora
-
-covid.patients <- covid.clean %>%
+covid.patients <- covid.clean %>% head(500000) %>%
   select(age_group, sex, race, symptom_status, underlying_conditions_yn, hosp_yn, death_yn, icu_yn) %>%
   na.omit()
 
-covid.split <- sdf_random_split(covid.patients, training = 0.75, test = 0.25, seed = 5)
-
-covid.training <- covid.split$training
-covid.test <- covid.split$test
+# covid.split <- sdf_random_split(covid.patients, training = 0.75, test = 0.25, seed = 5)
+# 
+# covid.training <- covid.split$training
+# covid.test <- covid.split$test
 
 covid.class.formula <- death_yn ~ 
   age_group +
@@ -241,11 +279,11 @@ covid.class.formula <- death_yn ~
 
 # за сваки метод класификације формирање класификационих модела за различите вредности параметара према три сценарија 
 # Pitanje: Tri scenarija - da li je to broj iteracija?
-covid.class.iters <- c(1, 3, 5, 15, 30)
-covid.class.model.accuracy.reg <- c(length(iters))
-covid.class.model.precision.reg <- c(length(iters))
-covid.class.model.f1.reg <- c(length(iters))
-covid.class.model.recall.reg <- c(length(iters))
+covid.class.iters <- c(1, 3, 15)
+covid.class.model.accuracy.reg <- c(length(3))
+covid.class.model.precision.reg <- c(length(3))
+covid.class.model.f1.reg <- c(length(3))
+covid.class.model.recall.reg <- c(length(3))
 counter <- 0
 
 for (iter in covid.class.iters) {
@@ -257,7 +295,6 @@ for (iter in covid.class.iters) {
   
   log.reg.eval <- ml_evaluate(log.reg, covid.test)
   
-  # израчунавање вредности различитих бројчаних показатеља перформанси
   covid.class.model.accuracy.reg[counter] <- log.reg.eval$accuracy()
   covid.class.model.precision.reg[counter] <- log.reg.eval$weighted_precision()
   covid.class.model.f1.reg[counter] <- log.reg.eval$weighted_f_measure()
@@ -312,6 +349,7 @@ summary(covid.class.model.accuracy.reg)
 
 # k-fold cross validation, k = 4
 
+k <- 4
 # одређивање перформанси применом унакрсне валидације
 covid.split <- covid.patients %>%
   sdf_random_split(seed=1,
@@ -327,18 +365,38 @@ covid.training <- list(
   s4 = sdf_bind_rows(covid.split$s1, covid.split$s2, covid.split$s3)
 )
 
-
-covid.log.reg.trained = list(s1=ml_logistic_regression(covid.training$s1, formula, family="binomial", threshold=0.5),
-               s2=ml_logistic_regression(covid.training$s2, formula, family="binomial", threshold=0.5),
-               s3=ml_logistic_regression(covid.training$s3, formula, family="binomial", threshold=0.5),
-               s4=ml_logistic_regression(covid.training$s4, formula, family="binomial", threshold=0.5)
+covid.test <- list(
+  s1 = covid.split$s1,
+  s2 = covid.split$s2,
+  s3 = covid.split$s3,
+  s4 = covid.split$s4
 )
 
-covid.log.reg.eval.accuracy <- (ml_evaluate(covid.log.reg.trained$s1, covid.split$s1)$accuracy() +
-                     ml_evaluate(covid.log.reg.trained$s2, covid.split$s2)$accuracy() +
-                     ml_evaluate(covid.log.reg.trained$s3, covid.split$s3)$accuracy() +
-                     ml_evaluate(covid.log.reg.trained$s4, covid.split$s4)$accuracy()
-) / 4
+iters <- c(1, 3, 10)
+ths <- c(0.5, 0.45, 0.55)
+covid.log.reg.accuracy <- list()
+covid.log.reg.f1 <- list()
+covid.log.reg.prec <- list()
+covid.log.reg.recall <- list()
+covid.log.reg.tp <- list()
+covid.log.reg.eval <- list()
+for(i in 1:3) {
+  covid.log.reg.trained = list(s1=ml_logistic_regression(covid.training$s1, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i]),
+                               s2=ml_logistic_regression(covid.training$s2, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i]),
+                               s3=ml_logistic_regression(covid.training$s3, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i]),
+                               s4=ml_logistic_regression(covid.training$s4, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i])
+  )
+  
+  covid.log.reg.eval.s1 <- ml_evaluate(covid.log.reg.trained$s1, covid.test$s1)
+  covid.log.reg.eval.s2 <- ml_evaluate(covid.log.reg.trained$s2, covid.test$s2)
+  covid.log.reg.eval.s3 <- ml_evaluate(covid.log.reg.trained$s3, covid.test$s3)
+  covid.log.reg.eval.s4 <- ml_evaluate(covid.log.reg.trained$s4, covid.test$s4)
+  
+  covid.log.reg.accuracy[[i]] <- (covid.log.reg.eval.s1$accuracy() + covid.log.reg.eval.s2$accuracy() + covid.log.reg.eval.s3$accuracy() + covid.log.reg.eval.s4$accuracy()) / k
+  covid.log.reg.prec[[i]] <- (covid.log.reg.eval.s1$weighted_precision() + covid.log.reg.eval.s2$weighted_precision() + covid.log.reg.eval.s3$weighted_precision() + covid.log.reg.eval.s4$weighted_precision()) / k
+  covid.log.reg.f1[[i]] <- (covid.log.reg.eval.s1$weighted_f_measure() + covid.log.reg.eval.s2$weighted_f_measure() + covid.log.reg.eval.s3$weighted_f_measure() + covid.log.reg.eval.s4$weighted_f_measure()) / k
+  covid.log.reg.recall[[i]] <- (covid.log.reg.eval.s1$weighted_recall() + covid.log.reg.eval.s2$weighted_recall() + covid.log.reg.eval.s3$weighted_recall() + covid.log.reg.eval.s4$weighted_recall()) / k
+}
 
 covid.dec.tree.trained = list(s1=ml_decision_tree_classifier(covid.training$s1, formula, min_instances_per_node = 1000, impurity = "gini"),
                              s2=ml_decision_tree_classifier(covid.training$s2, formula, min_instances_per_node = 1000, impurity = "gini"),
@@ -375,7 +433,7 @@ covid.clustering.data <- covid.clean %>%
     age_group == "65+ years" ~ 3,
     TRUE ~ NA_real_
   )) %>%
-  select(age_group_index, sex, race, case_month, res_state, hosp_yn) %>%
+  select(age_group_index, sex, race, case_month, res_state, death_yn) %>%
   na.omit()
 
 covid.clustering.data <- covid.clustering.data %>%
@@ -384,8 +442,8 @@ covid.clustering.data <- covid.clustering.data %>%
 
 covid.clustering.data.kmeans <- covid.clustering.data %>% 
   ml_kmeans(~ age_group_index + death_count, 
-            k = 4, 
-            max_iter = 3, 
+            k = 2, 
+            max_iter = 1, 
             init_mode = "k-means||")
 
 covid.clustering.data.kmeans
@@ -414,6 +472,3 @@ ggplot(data = covid.clustering.data,
   scale_y_continuous(labels = scales::comma) +
   scale_x_continuous(labels = scales::comma) +
   scale_color_manual(values = c("hotpink", "deepskyblue", "darkorchid1", "darkolivegreen2", "red", "orange", "green")) 
-
-covid.clustering.data.kmeans$summary$ml_summary
-# 
