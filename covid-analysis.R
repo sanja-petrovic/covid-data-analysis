@@ -257,7 +257,7 @@ corrplot(covid.correlation, method = "color", type = "upper", tl.col = "black", 
 
 # CLASSIFICATION
 
-covid.patients <- covid.clean %>% head(500000) %>%
+covid.patients <- covid.clean %>%
   select(age_group, sex, race, symptom_status, underlying_conditions_yn, hosp_yn, death_yn, icu_yn) %>%
   na.omit()
 
@@ -270,53 +270,7 @@ covid.class.formula <- death_yn ~
   hosp_yn + 
   icu_yn
 
-# decision tree
-
-covid.class.iters <- c(1, 3, 5, 15, 30)
-covid.class.model.accuracy.tree <- c(length(iters))
-counter <- 0
-
-for (iter in covid.class.iters) {
-  counter <- counter + 1
-  dec.tree <- ml_decision_tree_classifier(
-    x = covid.training, 
-    formula = covid.class.formula,
-    max_depth = iter, 
-    min_instances_per_node = 1000, 
-    impurity = "gini")
-  
-  dec.tree.eval <- ml_evaluate(dec.tree, covid.test)
-  covid.class.model.accuracy.tree[counter] <- dec.tree.eval$Accuracy
-}
-
-# support vector machine
-
-covid.class.iters <- c(1, 3, 5)
-covid.class.model.accuracies.svm <- c(length(iters))
-counter <- 0
-
-for (iter in covid.class.iters) {
-  counter <- counter + 1
-  svm <- ml_linear_svc(
-    x = covid.training, 
-    formula = covid.class.formula,
-    max_iter = iter)
-  
-  svm.eval <- ml_evaluate(svm, covid.test)
-  covid.class.model.accuracies.svm[counter] <- svm.eval$Accuracy
-}
-
-covid.class.model.accuracies.svm
-
-# бирање решења за класификацију по сваком од метода и на нивоу свих метода - Sta ovo tacno podrazumeva?
-summary(covid.class.model.accuracies.svm)
-summary(covid.class.model.accuracy.tree)
-summary(covid.class.model.accuracy.reg)
-
-# k-fold cross validation, k = 4
-
 k <- 4
-# одређивање перформанси применом унакрсне валидације
 covid.split <- covid.patients %>%
   sdf_random_split(seed=1,
                    s1=0.25,
@@ -366,39 +320,84 @@ for(i in 1:1:length(iters)) {
 }
 data <- data.frame(iter = iters, th = ths, accuracy = unlist(covid.log.reg.accuracy))
 ggplot(data, aes(x = iter, y = accuracy, color = as.factor(th))) +
-  geom_point(position = position_jitter(width = 0.1, height = 0), alpha = 0.6) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
   scale_x_continuous(breaks = c(1, 3, 10)) +
-  scale_color_manual(values = c("#FF69B4", bright_blue, bright_green)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
   labs(title = "Logistic Regression Accuracy Over Iterations and Thresholds",
        x = "Iteration", 
        y = "Accuracy",
        color = "Threshold") +
   theme_minimal()
 
-covid.dec.tree.trained = list(s1=ml_decision_tree_classifier(covid.training$s1, formula, min_instances_per_node = 1000, impurity = "gini"),
-                             s2=ml_decision_tree_classifier(covid.training$s2, formula, min_instances_per_node = 1000, impurity = "gini"),
-                             s3=ml_decision_tree_classifier(covid.training$s3, formula, min_instances_per_node = 1000, impurity = "gini"),
-                             s4=ml_decision_tree_classifier(covid.training$s4, formula, min_instances_per_node = 1000, impurity = "gini")
-)
 
-covid.dec.tree.eval.accuracy <- (ml_evaluate(covid.dec.tree.trained$s1, covid.split$s1)$Accuracy +
-                                  ml_evaluate(covid.dec.tree.trained$s2, covid.split$s2)$Accuracy +
-                                  ml_evaluate(covid.dec.tree.trained$s3, covid.split$s3)$Accuracy +
-                                  ml_evaluate(covid.dec.tree.trained$s4, covid.split$s4)$Accuracy
-) / 4
+inst <- c(1, 1, 1, 1000, 1000, 1000, 2000, 2000, 2000)
+depth <- c(3, 5, 20, 3, 5, 20, 3, 5, 20)
+covid.dec.tree.accuracy <- list()
+covid.dec.tree.f1 <- list()
+covid.dec.tree.prec <- list()
+covid.dec.tree.recall <- list()
+covid.dec.tree.tp <- list()
+covid.dec.tree.eval <- list()
 
 
-covid.svm.trained = list(s1=ml_linear_svc(covid.training$s1, formula, min_instances_per_node = 1000, impurity = "gini"),
-                              s2=ml_linear_svc(covid.training$s2, formula, min_instances_per_node = 1000, impurity = "gini"),
-                              s3=ml_linear_svc(covid.training$s3, formula, min_instances_per_node = 1000, impurity = "gini"),
-                              s4=ml_linear_svc(covid.training$s4, formula, min_instances_per_node = 1000, impurity = "gini")
-)
+for(i in 1:1:length(inst)) {
+  covid.dec.tree.trained = list(s1=ml_decision_tree_classifier(covid.training$s1, covid.class.formula, min_instances_per_node = inst[i], max_depth=depth[i], impurity = "gini"),
+                               s2=ml_decision_tree_classifier(covid.training$s2, covid.class.formula, min_instances_per_node = inst[i], max_depth=depth[i], impurity = "gini"),
+                               s3=ml_decision_tree_classifier(covid.training$s3, covid.class.formula, min_instances_per_node = inst[i], max_depth=depth[i], impurity = "gini"),
+                               s4=ml_decision_tree_classifier(covid.training$s4, covid.class.formula, min_instances_per_node = inst[i], max_depth=depth[i], impurity = "gini")
+  )
+  
+  covid.dec.tree.eval.s1 <- ml_evaluate(covid.dec.tree.trained$s1, covid.test$s1)
+  covid.dec.tree.eval.s2 <- ml_evaluate(covid.dec.tree.trained$s2, covid.test$s2)
+  covid.dec.tree.eval.s3 <- ml_evaluate(covid.dec.tree.trained$s3, covid.test$s3)
+  covid.dec.tree.eval.s4 <- ml_evaluate(covid.dec.tree.trained$s4, covid.test$s4)
+  
+  covid.dec.tree.accuracy[[i]] <- (covid.dec.tree.eval.s1$Accuracy + covid.dec.tree.eval.s2$Accuracy + covid.dec.tree.eval.s3$Accuracy + covid.dec.tree.eval.s4$Accuracy) / k
+}
+data <- data.frame(inst = inst, depth = depth, accuracy = unlist(covid.dec.tree.accuracy))
+ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(3, 5, 20)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Decision Tree Accuracy Over Min Instances Per Node and Max Depth",
+       x = "Depth", 
+       y = "Accuracy",
+       color = "Min Instances Per Node") +
+  theme_minimal()
 
-covid.svm.eval.accuracy <- (ml_evaluate(covid.svm.trained$s1, covid.split$s1)$Accuracy +
-                                   ml_evaluate(covid.svm.trained$s2, covid.split$s2)$Accuracy +
-                                   ml_evaluate(covid.svm.trained$s3, covid.split$s3)$Accuracy +
-                                   ml_evaluate(covid.svm.trained$s4, covid.split$s4)$Accuracy
-) / 4
+iters <- c(1, 1, 1, 3, 3, 3, 10, 10, 10)
+ths <- c(0.5, 0.45, 0.55, 0.5, 0.45, 0.55, 0.5, 0.45, 0.55)
+covid.svm.accuracy <- list()
+covid.svm.f1 <- list()
+covid.svm.prec <- list()
+covid.svm.recall <- list()
+covid.svm.tp <- list()
+covid.svm.eval <- list()
+
+for(i in 1:1:length(iters)) {
+  covid.svm.trained = list(s1=ml_linear_svc(covid.training$s1, covid.class.formula, threshold=ths[i], max_iter = iters[i]),
+                                s2=ml_linear_svc(covid.training$s2, covid.class.formula, threshold=ths[i], max_iter = iters[i]),
+                                s3=ml_linear_svc(covid.training$s3, covid.class.formula, threshold=ths[i], max_iter = iters[i]),
+                                s4=ml_linear_svc(covid.training$s4, covid.class.formula, threshold=ths[i], max_iter = iters[i])
+  )
+  
+  covid.svm.eval.s1 <- ml_evaluate(covid.svm.trained$s1, covid.test$s1)
+  covid.svm.eval.s2 <- ml_evaluate(covid.svm.trained$s2, covid.test$s2)
+  covid.svm.eval.s3 <- ml_evaluate(covid.svm.trained$s3, covid.test$s3)
+  covid.svm.eval.s4 <- ml_evaluate(covid.svm.trained$s4, covid.test$s4)
+  
+  covid.svm.accuracy[[i]] <- (covid.svm.eval.s1$Accuracy + covid.svm.eval.s2$Accuracy + covid.svm.eval.s3$Accuracy + covid.svm.eval.s4$Accuracy) / k
+}
+data <- data.frame(iter = iters, th = ths, accuracy = unlist(covid.svm.accuracy))
+ggplot(data, aes(x = iter, y = accuracy, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Support Vector Machine Accuracy Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Accuracy",
+       color = "Threshold") +
+  theme_minimal()
 
 
 # CLUSTERING
