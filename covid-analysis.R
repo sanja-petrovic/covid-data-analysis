@@ -152,13 +152,11 @@ ggplot(data = covid.mosaic.data) +
 
 race_data <- covid.clean %>%
   group_by(race) %>%
-  summarise(count = n()) %>%
-  na.omit()
+  summarise(count = n())
 
 sex_data <- covid.clean %>%
   group_by(sex) %>%
-  summarise(count = n()) %>%
-  na.omit()
+  summarise(count = n())
 
 ggplot(race_data %>% collect(), aes(x = "", y = count, fill = race)) +
   geom_bar(stat = "identity", width = 1) +
@@ -189,6 +187,32 @@ ggplot(sex_data %>% collect(), aes(x = "", y = count, fill = sex)) +
     axis.ticks = element_blank(),
     plot.title = element_text(hjust = 0.5, size = 14, face = "bold")
   )
+
+balloon_data <- covid.clean %>%
+  group_by(age_group, sex) %>%
+  summarise(count = n())
+
+ggplot(balloon_data %>% collect(), aes(x = age_group, y = sex, size = count, fill = count)) +
+  geom_point(shape = 21, color = "black") +
+  scale_size_continuous(range = c(1, 20), breaks = scales::pretty_breaks(n = 5), labels = scales::comma) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", labels = scales::comma) +
+  labs(
+    title = "Balloon Plot of COVID-19 Cases by Age Group and Sex",
+    x = "Age Group",
+    y = "Sex",
+    size = "Number of Cases",
+    fill = "Number of Cases"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )  
+
+
 # CLASSIFICATION
 
 # формирање класификационих модела за исто циљно обележје применом три
