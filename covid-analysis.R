@@ -257,7 +257,7 @@ corrplot(covid.correlation, method = "color", type = "upper", tl.col = "black", 
 
 # CLASSIFICATION
 
-covid.patients <- covid.clean %>%
+covid.patients <- covid.clean %>% head(50000) %>%
   select(age_group, sex, race, symptom_status, underlying_conditions_yn, hosp_yn, death_yn, icu_yn) %>%
   na.omit()
 
@@ -298,7 +298,6 @@ covid.log.reg.accuracy <- list()
 covid.log.reg.f1 <- list()
 covid.log.reg.prec <- list()
 covid.log.reg.recall <- list()
-covid.log.reg.tp <- list()
 covid.log.reg.eval <- list()
 
 for(i in 1:1:length(iters)) {
@@ -318,7 +317,8 @@ for(i in 1:1:length(iters)) {
   covid.log.reg.f1[[i]] <- (covid.log.reg.eval.s1$weighted_f_measure() + covid.log.reg.eval.s2$weighted_f_measure() + covid.log.reg.eval.s3$weighted_f_measure() + covid.log.reg.eval.s4$weighted_f_measure()) / k
   covid.log.reg.recall[[i]] <- (covid.log.reg.eval.s1$weighted_recall() + covid.log.reg.eval.s2$weighted_recall() + covid.log.reg.eval.s3$weighted_recall() + covid.log.reg.eval.s4$weighted_recall()) / k
 }
-data <- data.frame(iter = iters, th = ths, accuracy = unlist(covid.log.reg.accuracy))
+data <- data.frame(iter = iters, th = ths, accuracy = unlist(covid.log.reg.accuracy), precision = unlist(covid.log.reg.prec), recall = unlist(covid.log.reg.recall), f1 = unlist(covid.log.reg.f1))
+
 ggplot(data, aes(x = iter, y = accuracy, color = as.factor(th))) +
   geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
   scale_x_continuous(breaks = c(1, 3, 10)) +
@@ -329,6 +329,35 @@ ggplot(data, aes(x = iter, y = accuracy, color = as.factor(th))) +
        color = "Threshold") +
   theme_minimal()
 
+ggplot(data, aes(x = iter, y = precision, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Logistic Regression Precision Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Precision",
+       color = "Threshold") +
+  theme_minimal()
+
+ggplot(data, aes(x = iter, y = recall, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Logistic Regression Recall Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Recall",
+       color = "Threshold") +
+  theme_minimal()
+
+ggplot(data, aes(x = iter, y = f1, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Logistic Regression F1 Measure Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "F1 Measure",
+       color = "Threshold") +
+  theme_minimal()
 
 inst <- c(1, 1, 1, 1000, 1000, 1000, 2000, 2000, 2000)
 depth <- c(3, 5, 20, 3, 5, 20, 3, 5, 20)
@@ -336,25 +365,63 @@ covid.dec.tree.accuracy <- list()
 covid.dec.tree.f1 <- list()
 covid.dec.tree.prec <- list()
 covid.dec.tree.recall <- list()
-covid.dec.tree.tp <- list()
 covid.dec.tree.eval <- list()
 
-
-for(i in 1:1:length(inst)) {
+for(i in 1:length(inst)) {
   covid.dec.tree.trained = list(s1=ml_decision_tree_classifier(covid.training$s1, covid.class.formula, min_instances_per_node = inst[i], max_depth=depth[i], impurity = "gini"),
                                s2=ml_decision_tree_classifier(covid.training$s2, covid.class.formula, min_instances_per_node = inst[i], max_depth=depth[i], impurity = "gini"),
                                s3=ml_decision_tree_classifier(covid.training$s3, covid.class.formula, min_instances_per_node = inst[i], max_depth=depth[i], impurity = "gini"),
                                s4=ml_decision_tree_classifier(covid.training$s4, covid.class.formula, min_instances_per_node = inst[i], max_depth=depth[i], impurity = "gini")
   )
   
-  covid.dec.tree.eval.s1 <- ml_evaluate(covid.dec.tree.trained$s1, covid.test$s1)
-  covid.dec.tree.eval.s2 <- ml_evaluate(covid.dec.tree.trained$s2, covid.test$s2)
-  covid.dec.tree.eval.s3 <- ml_evaluate(covid.dec.tree.trained$s3, covid.test$s3)
-  covid.dec.tree.eval.s4 <- ml_evaluate(covid.dec.tree.trained$s4, covid.test$s4)
+  covid.dec.tree.eval.s1 <- ml_predict(covid.dec.tree.trained$s1, covid.test$s1)
+  covid.dec.tree.eval.s2 <- ml_predict(covid.dec.tree.trained$s2, covid.test$s2)
+  covid.dec.tree.eval.s3 <- ml_predict(covid.dec.tree.trained$s3, covid.test$s3)
+  covid.dec.tree.eval.s4 <- ml_predict(covid.dec.tree.trained$s4, covid.test$s4)
   
-  covid.dec.tree.accuracy[[i]] <- (covid.dec.tree.eval.s1$Accuracy + covid.dec.tree.eval.s2$Accuracy + covid.dec.tree.eval.s3$Accuracy + covid.dec.tree.eval.s4$Accuracy) / k
+  covid.dec.tree.eval.s1.pr <- covid.dec.tree.eval.s1 %>%
+    mutate(predicted_class = ifelse(prediction > 0.5, 1, 0))
+  covid.dec.tree.eval.s2.pr <- covid.dec.tree.eval.s2 %>%
+    mutate(predicted_class = ifelse(prediction > 0.5, 1, 0))
+  covid.dec.tree.eval.s3.pr <- covid.dec.tree.eval.s3 %>%
+    mutate(predicted_class = ifelse(prediction > 0.5, 1, 0))
+  covid.dec.tree.eval.s4.pr <- covid.dec.tree.eval.s4 %>%
+    mutate(predicted_class = ifelse(prediction > 0.5, 1, 0))
+  
+  covid.dec.tree.eval.s1.cm <- covid.dec.tree.eval.s1.pr %>%
+    select(actual = death_yn, predicted = prediction) %>% collect() %>% table() %>% ensure_confusion_matrix_structure
+  covid.dec.tree.eval.s2.cm <- covid.dec.tree.eval.s2.pr %>%
+    select(actual = death_yn, predicted = prediction) %>% collect() %>% table() %>% ensure_confusion_matrix_structure
+  covid.dec.tree.eval.s3.cm <- covid.dec.tree.eval.s3.pr %>%
+    select(actual = death_yn, predicted = prediction) %>% collect() %>% table() %>% ensure_confusion_matrix_structure
+  covid.dec.tree.eval.s4.cm <- covid.dec.tree.eval.s4.pr %>%
+    select(actual = death_yn, predicted = prediction) %>% collect() %>% table() %>% ensure_confusion_matrix_structure
+  
+  s1.acc <- (covid.dec.tree.eval.s1.cm[1]+covid.dec.tree.eval.s1.cm[4])/(covid.dec.tree.eval.s1.cm[1]+covid.dec.tree.eval.s1.cm[2]+covid.dec.tree.eval.s1.cm[3]+covid.dec.tree.eval.s1.cm[4])
+  s2.acc <- (covid.dec.tree.eval.s2.cm[1]+covid.dec.tree.eval.s2.cm[4])/(covid.dec.tree.eval.s2.cm[1]+covid.dec.tree.eval.s2.cm[2]+covid.dec.tree.eval.s2.cm[3]+covid.dec.tree.eval.s2.cm[4])
+  s3.acc <- (covid.dec.tree.eval.s3.cm[1]+covid.dec.tree.eval.s3.cm[4])/(covid.dec.tree.eval.s3.cm[1]+covid.dec.tree.eval.s3.cm[2]+covid.dec.tree.eval.s3.cm[3]+covid.dec.tree.eval.s3.cm[4])
+  s4.acc <- (covid.dec.tree.eval.s4.cm[1]+covid.dec.tree.eval.s4.cm[4])/(covid.dec.tree.eval.s4.cm[1]+covid.dec.tree.eval.s4.cm[2]+covid.dec.tree.eval.s4.cm[3]+covid.dec.tree.eval.s4.cm[4])
+  covid.dec.tree.accuracy[[i]] <- (s1.acc + s2.acc + s3.acc + s4.acc) / k
+  
+  s1.prec <- (covid.dec.tree.eval.s1.cm[4])/(covid.dec.tree.eval.s1.cm[4]+covid.dec.tree.eval.s1.cm[3])
+  s2.prec <- (covid.dec.tree.eval.s2.cm[4])/(covid.dec.tree.eval.s2.cm[4]+covid.dec.tree.eval.s2.cm[3])
+  s3.prec <- (covid.dec.tree.eval.s3.cm[4])/(covid.dec.tree.eval.s3.cm[4]+covid.dec.tree.eval.s3.cm[3])
+  s4.prec <- (covid.dec.tree.eval.s4.cm[4])/(covid.dec.tree.eval.s4.cm[4]+covid.dec.tree.eval.s4.cm[3])
+  covid.dec.tree.prec[[i]] <- (s1.prec + s2.prec + s3.prec + s4.prec) / k
+  
+  s1.recall <- (covid.dec.tree.eval.s1.cm[4])/(covid.dec.tree.eval.s1.cm[4]+covid.dec.tree.eval.s1.cm[2])
+  s2.recall <- (covid.dec.tree.eval.s2.cm[4])/(covid.dec.tree.eval.s2.cm[4]+covid.dec.tree.eval.s2.cm[2])
+  s3.recall <- (covid.dec.tree.eval.s3.cm[4])/(covid.dec.tree.eval.s3.cm[4]+covid.dec.tree.eval.s3.cm[2])
+  s4.recall <- (covid.dec.tree.eval.s4.cm[4])/(covid.dec.tree.eval.s4.cm[4]+covid.dec.tree.eval.s4.cm[2])
+  covid.dec.tree.recall[[i]] <- (s1.recall + s2.recall + s3.recall + s4.recall) / k
+  
+  s1.f1 <- 2/(1/s1.prec+1/s1.recall) 
+  s2.f1 <- 2/(1/s2.prec+1/s2.recall) 
+  s3.f1 <- 2/(1/s3.prec+1/s3.recall) 
+  s4.f1 <- 2/(1/s4.prec+1/s4.recall) 
+  covid.dec.tree.f1[[i]] <- (s1.f1 + s2.f1 + s3.f1 + s4.f1) / k
 }
-data <- data.frame(inst = inst, depth = depth, accuracy = unlist(covid.dec.tree.accuracy))
+data <- data.frame(inst = inst, depth = depth, accuracy = unlist(covid.dec.tree.accuracy), precision = unlist(covid.dec.tree.prec), recall = unlist(covid.dec.tree.recall), f1 = unlist(covid.dec.tree.f1))
 ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
   geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
   scale_x_continuous(breaks = c(3, 5, 20)) +
@@ -365,30 +432,100 @@ ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
        color = "Min Instances Per Node") +
   theme_minimal()
 
+ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(3, 5, 20)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Decision Tree Precision Over Min Instances Per Node and Max Depth",
+       x = "Iteration", 
+       y = "Precision",
+       color = "Threshold") +
+  theme_minimal()
+
+ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(3, 5, 20)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Decision Tree Recall Over Min Instances Per Node and Max Depth",
+       x = "Iteration", 
+       y = "Recall",
+       color = "Threshold") +
+  theme_minimal()
+
+ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(3, 5, 20)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Decision Tree F1 Measure Over Min Instances Per Node and Max Depth",
+       x = "Iteration", 
+       y = "F1 Measure",
+       color = "Threshold") +
+  theme_minimal()
+
 iters <- c(1, 1, 1, 3, 3, 3, 10, 10, 10)
 ths <- c(0.5, 0.45, 0.55, 0.5, 0.45, 0.55, 0.5, 0.45, 0.55)
 covid.svm.accuracy <- list()
 covid.svm.f1 <- list()
 covid.svm.prec <- list()
 covid.svm.recall <- list()
-covid.svm.tp <- list()
 covid.svm.eval <- list()
 
-for(i in 1:1:length(iters)) {
+for(i in 1:length(iters)) {
   covid.svm.trained = list(s1=ml_linear_svc(covid.training$s1, covid.class.formula, threshold=ths[i], max_iter = iters[i]),
                                 s2=ml_linear_svc(covid.training$s2, covid.class.formula, threshold=ths[i], max_iter = iters[i]),
                                 s3=ml_linear_svc(covid.training$s3, covid.class.formula, threshold=ths[i], max_iter = iters[i]),
                                 s4=ml_linear_svc(covid.training$s4, covid.class.formula, threshold=ths[i], max_iter = iters[i])
   )
   
-  covid.svm.eval.s1 <- ml_evaluate(covid.svm.trained$s1, covid.test$s1)
-  covid.svm.eval.s2 <- ml_evaluate(covid.svm.trained$s2, covid.test$s2)
-  covid.svm.eval.s3 <- ml_evaluate(covid.svm.trained$s3, covid.test$s3)
-  covid.svm.eval.s4 <- ml_evaluate(covid.svm.trained$s4, covid.test$s4)
+  covid.svm.eval.s1 <- ml_predict(covid.svm.trained$s1, covid.test$s1)
+  covid.svm.eval.s2 <- ml_predict(covid.svm.trained$s2, covid.test$s2)
+  covid.svm.eval.s3 <- ml_predict(covid.svm.trained$s3, covid.test$s3)
+  covid.svm.eval.s4 <- ml_predict(covid.svm.trained$s4, covid.test$s4)
   
-  covid.svm.accuracy[[i]] <- (covid.svm.eval.s1$Accuracy + covid.svm.eval.s2$Accuracy + covid.svm.eval.s3$Accuracy + covid.svm.eval.s4$Accuracy) / k
+  covid.svm.eval.s1.pr <- covid.svm.eval.s1 %>%
+    mutate(predicted_class = ifelse(prediction > 0.5, 1, 0))
+  covid.svm.eval.s2.pr <- covid.svm.eval.s2 %>%
+    mutate(predicted_class = ifelse(prediction > 0.5, 1, 0))
+  covid.svm.eval.s3.pr <- covid.svm.eval.s3 %>%
+    mutate(predicted_class = ifelse(prediction > 0.5, 1, 0))
+  covid.svm.eval.s4.pr <- covid.svm.eval.s4 %>%
+    mutate(predicted_class = ifelse(prediction > 0.5, 1, 0))
+  
+  covid.svm.eval.s1.cm <- covid.svm.eval.s1.pr %>% 
+    select(actual = death_yn, predicted = prediction) %>% collect() %>% table() %>% ensure_confusion_matrix_structure
+  covid.svm.eval.s2.cm <- covid.svm.eval.s2.pr %>%
+    select(actual = death_yn, predicted = prediction) %>% collect() %>% table() %>% ensure_confusion_matrix_structure
+  covid.svm.eval.s3.cm <- covid.svm.eval.s3.pr %>%
+    select(actual = death_yn, predicted = prediction) %>% collect() %>% table() %>% ensure_confusion_matrix_structure
+  covid.svm.eval.s4.cm <- covid.svm.eval.s4.pr %>%
+    select(actual = death_yn, predicted = prediction) %>% collect() %>% table() %>% ensure_confusion_matrix_structure
+  
+  s1.acc <- (covid.svm.eval.s1.cm[1]+covid.svm.eval.s1.cm[4])/(covid.svm.eval.s1.cm[1]+covid.svm.eval.s1.cm[2]+covid.svm.eval.s1.cm[3]+covid.svm.eval.s1.cm[4])
+  s2.acc <- (covid.svm.eval.s2.cm[1]+covid.svm.eval.s2.cm[4])/(covid.svm.eval.s2.cm[1]+covid.svm.eval.s2.cm[2]+covid.svm.eval.s2.cm[3]+covid.svm.eval.s2.cm[4])
+  s3.acc <- (covid.svm.eval.s3.cm[1]+covid.svm.eval.s3.cm[4])/(covid.svm.eval.s3.cm[1]+covid.svm.eval.s3.cm[2]+covid.svm.eval.s3.cm[3]+covid.svm.eval.s3.cm[4])
+  s4.acc <- (covid.svm.eval.s4.cm[1]+covid.svm.eval.s4.cm[4])/(covid.svm.eval.s4.cm[1]+covid.svm.eval.s4.cm[2]+covid.svm.eval.s4.cm[3]+covid.svm.eval.s4.cm[4])
+  covid.svm.accuracy[[i]] <- (s1.acc + s2.acc + s3.acc + s4.acc) / k
+  
+  s1.prec <- (covid.svm.eval.s1.cm[4])/(covid.svm.eval.s1.cm[4]+covid.svm.eval.s1.cm[3])
+  s2.prec <- (covid.svm.eval.s2.cm[4])/(covid.svm.eval.s2.cm[4]+covid.svm.eval.s2.cm[3])
+  s3.prec <- (covid.svm.eval.s3.cm[4])/(covid.svm.eval.s3.cm[4]+covid.svm.eval.s3.cm[3])
+  s4.prec <- (covid.svm.eval.s4.cm[4])/(covid.svm.eval.s4.cm[4]+covid.svm.eval.s4.cm[3])
+  covid.svm.prec[[i]] <- (s1.prec + s2.prec + s3.prec + s4.prec) / k
+  
+  s1.recall <- (covid.svm.eval.s1.cm[4])/(covid.svm.eval.s1.cm[4]+covid.svm.eval.s1.cm[2])
+  s2.recall <- (covid.svm.eval.s2.cm[4])/(covid.svm.eval.s2.cm[4]+covid.svm.eval.s2.cm[2])
+  s3.recall <- (covid.svm.eval.s3.cm[4])/(covid.svm.eval.s3.cm[4]+covid.svm.eval.s3.cm[2])
+  s4.recall <- (covid.svm.eval.s4.cm[4])/(covid.svm.eval.s4.cm[4]+covid.svm.eval.s4.cm[2])
+  covid.svm.recall[[i]] <- (s1.recall + s2.recall + s3.recall + s4.recall) / k
+  
+  s1.f1 <- 2/(1/s1.prec+1/s1.recall) 
+  s2.f1 <- 2/(1/s2.prec+1/s2.recall) 
+  s3.f1 <- 2/(1/s3.prec+1/s3.recall) 
+  s4.f1 <- 2/(1/s4.prec+1/s4.recall) 
+  covid.svm.f1[[i]] <- (s1.f1 + s2.f1 + s3.f1 + s4.f1) / k
 }
-data <- data.frame(iter = iters, th = ths, accuracy = unlist(covid.svm.accuracy))
+
+data <- data.frame(iter = iters, th = ths, accuracy = unlist(covid.svm.accuracy), precision = unlist(covid.svm.prec), recall = unlist(covid.svm.recall), f1 = unlist(covid.svm.f1))
 ggplot(data, aes(x = iter, y = accuracy, color = as.factor(th))) +
   geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
   scale_x_continuous(breaks = c(1, 3, 10)) +
@@ -399,9 +536,37 @@ ggplot(data, aes(x = iter, y = accuracy, color = as.factor(th))) +
        color = "Threshold") +
   theme_minimal()
 
+ggplot(data, aes(x = iter, y = precision, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Support Vector Machine Precision Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Precision",
+       color = "Threshold") +
+  theme_minimal()
 
+ggplot(data, aes(x = iter, y = recall, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Support Vector Machine Recall Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Recall",
+       color = "Threshold") +
+  theme_minimal()
+
+ggplot(data, aes(x = iter, y = f1, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Support Vector Machine F1 Measure Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "F1 Measure",
+       color = "Threshold") +
+  theme_minimal()
 # CLUSTERING
-covid.clustering.data <- covid.clean %>%
+covid.clustering.data <- covid.clean %>% head(100000) %>%
   mutate(age_group_index = case_when(
     age_group == "0 - 17 years" ~ 0,
     age_group == "18 to 49 years" ~ 1,
@@ -418,24 +583,55 @@ covid.clustering.data <- covid.clustering.data %>%
 
 covid.clustering.data.kmeans <- covid.clustering.data %>% 
   ml_kmeans(~ age_group_index + death_count, 
-            k = 2, 
+            k = 7, 
             max_iter = 1, 
             init_mode = "k-means||")
 
-covid.clustering.data.kmeans
-
-cluster.values2 <- covid.clustering.data.kmeans$model$summary$cluster() %>% collect()
+cluster.values <- covid.clustering.data.kmeans$model$summary$cluster() %>% collect()
 covid.clustering.data <- covid.clustering.data %>% collect()
-covid.clustering.data$clust <- as.factor(cluster.values2$prediction)
+covid.clustering.data$clust <- as.factor(cluster.values$prediction)
 
-covid.clustering.data.kmeans$centers
+cluster_analysis <- covid.clustering.data %>%
+  group_by(clust) %>%
+  summarise(
+    avg_death_count = mean(death_count, na.rm = TRUE),
+    avg_age_group_index = mean(age_group_index, na.rm = TRUE),
+    count = n()
+  )
+cluster_analysis <- cluster_analysis %>% collect()
 
-cluster.centers.df2 <- data.frame(covid.clustering.data.kmeans$centers)
-cluster.centers.df2
+ggplot(cluster_analysis, aes(x = clust, y = avg_death_count, fill = clust)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Average Death Count per Cluster",
+       x = "Cluster",
+       y = "Average Death Count") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = c("hotpink", "deepskyblue", "darkorchid1", "darkolivegreen2", "red", "orange", "green"))
+
+ggplot(cluster_analysis, aes(x = clust, y = avg_age_group_index, fill = clust)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Average Age Group Index per Cluster",
+       x = "Cluster",
+       y = "Average Age Group Index") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = c("hotpink", "deepskyblue", "darkorchid1", "darkolivegreen2", "red", "orange", "green"))
+
+ggplot(cluster_analysis, aes(x = clust, y = count, fill = clust)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("hotpink", "deepskyblue", "darkorchid1", "darkolivegreen2", "red", "orange", "green")) +
+  labs(title = "Number of Entities per Cluster",
+       x = "Cluster",
+       y = "Number of Entities") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+cluster.centers.df <- data.frame(covid.clustering.data.kmeans$centers)
 ggplot(data = covid.clustering.data,
        aes(x = age_group_index, y = death_count, colour = clust)) +
   geom_jitter(size = 1) +
-  geom_point(data = cluster.centers.df2,
+  geom_point(data = cluster.centers.df,
              color = "black",
              size = 2,
              shape = 0 )+
@@ -448,3 +644,25 @@ ggplot(data = covid.clustering.data,
   scale_y_continuous(labels = scales::comma) +
   scale_x_continuous(labels = scales::comma) +
   scale_color_manual(values = c("hotpink", "deepskyblue", "darkorchid1", "darkolivegreen2", "red", "orange", "green")) 
+
+
+ensure_confusion_matrix_structure <- function(cm) {
+  if (!("0" %in% colnames(cm))) {
+    cm <- cbind(cm, "0" = 0)
+  }
+  if (!("1" %in% colnames(cm))) {
+    cm <- cbind(cm, "1" = 0)
+  }
+  cm <- cm[, c("0", "1")]
+  
+  if (!("No" %in% rownames(cm))) {
+    cm <- rbind(cm, "No" = c(0, 0))
+  }
+  if (!("Yes" %in% rownames(cm))) {
+    cm <- rbind(cm, "Yes" = c(0, 0))
+  }
+  
+  cm <- cm[c("No", "Yes"), ]
+  
+  return(cm)
+}
