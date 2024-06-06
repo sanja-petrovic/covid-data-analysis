@@ -7,9 +7,7 @@ library(ggmosaic)
 library(reshape2)
 library(corrplot)
 
-
 sc <- spark_connect(master = "local")
-spark_get_java()
 
 covid.raw <- spark_read_csv(sc, name="covid", path=".")
 
@@ -248,8 +246,6 @@ covid.numeric <- covid.numeric %>%
   ) %>%
   na.omit()
 
-
-# Calculate the correlation matrix
 covid.correlation <- cor(covid.numeric %>% collect())
 
 corrplot(covid.correlation, method = "color", type = "upper", tl.col = "black", tl.srt = 45, addCoef.col = "black", number.cex = 0.7)
@@ -257,7 +253,7 @@ corrplot(covid.correlation, method = "color", type = "upper", tl.col = "black", 
 
 # CLASSIFICATION
 
-covid.patients <- covid.clean %>% head(50000) %>%
+covid.patients <- covid.clean %>%
   select(age_group, sex, race, symptom_status, underlying_conditions_yn, hosp_yn, death_yn, icu_yn) %>%
   na.omit()
 
@@ -437,9 +433,9 @@ ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
   scale_x_continuous(breaks = c(3, 5, 20)) +
   scale_color_manual(values = c("red", "blue", "green")) +
   labs(title = "Decision Tree Precision Over Min Instances Per Node and Max Depth",
-       x = "Iteration", 
+       x = "Depth", 
        y = "Precision",
-       color = "Threshold") +
+       color = "Min Instances Per Node") +
   theme_minimal()
 
 ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
@@ -447,9 +443,9 @@ ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
   scale_x_continuous(breaks = c(3, 5, 20)) +
   scale_color_manual(values = c("red", "blue", "green")) +
   labs(title = "Decision Tree Recall Over Min Instances Per Node and Max Depth",
-       x = "Iteration", 
+       x = "Depth", 
        y = "Recall",
-       color = "Threshold") +
+       color = "Min Instances Per Node") +
   theme_minimal()
 
 ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
@@ -457,9 +453,9 @@ ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
   scale_x_continuous(breaks = c(3, 5, 20)) +
   scale_color_manual(values = c("red", "blue", "green")) +
   labs(title = "Decision Tree F1 Measure Over Min Instances Per Node and Max Depth",
-       x = "Iteration", 
+       x = "Depth", 
        y = "F1 Measure",
-       color = "Threshold") +
+       color = "Min Instances Per Node") +
   theme_minimal()
 
 iters <- c(1, 1, 1, 3, 3, 3, 10, 10, 10)
@@ -566,7 +562,7 @@ ggplot(data, aes(x = iter, y = f1, color = as.factor(th))) +
        color = "Threshold") +
   theme_minimal()
 # CLUSTERING
-covid.clustering.data <- covid.clean %>% head(100000) %>%
+covid.clustering.data <- covid.clean %>%
   mutate(age_group_index = case_when(
     age_group == "0 - 17 years" ~ 0,
     age_group == "18 to 49 years" ~ 1,

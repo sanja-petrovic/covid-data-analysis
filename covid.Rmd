@@ -1,0 +1,689 @@
+---
+title: "RVPII izveštaj"
+author: "Sanja Petrović E2 4/2023"
+date: '2024-06-06'
+output: html_document
+---
+
+```{r eval=T, echo=F, results='hide', include=FALSE}
+library(sparklyr)
+library(dplyr)
+library(ggplot2)
+library(dbplot)
+library(knitr)
+```
+```{r eval=F}
+sc <- spark_connect(master = "local")
+```
+## Uvod
+
+Ovaj izveštaj predstavlja uvid u sprovođenu analizu podataka vezanih za obolele od pandemije virusa COVID-19 u SAD u periodu od februara 2020. do maja 2024. godine. U toku ovog izveštaja biće detaljno opisani skup podataka, način obrade i pregled dobijenih rezultata.
+
+## Tehnologija
+
+Za implementaciju su korišćeni programski jezik *R* verzije 4.4.0 i alat *Apache Spark* verzije 3.5.1. Pored toga, korišćeni su i paketi `sparklyr`, `dplyr`, `ggplot2`, `ggmosaic`, `reshape2` i `corrplot`.
+
+## Skup podataka
+
+Skup podataka je objavljen od strane američke nacionalne agencije za javno zdravlje *Centers for Disease Control and Prevention* (*CDC*) pod nazivom *COVID-19 Case Surveillance Public Use Data with Geography* i [javno je dostupan na njihovom veb-sajtu](https://data.cdc.gov/Case-Surveillance/COVID-19-Case-Surveillance-Public-Use-Data-with-Ge/n8mc-b4w4/about_data). Svaki red predstavlja deidentifikovanog pacijenta. Skup podataka je veličine preko 14 *GB* i sadrži preko 106 miliona redova.
+
+Izdvojene kolone:
+
+-   *case_month*: Godina i mesec slučaja, u formatu `YYYY-MM`.
+-   *res_state*: Savezna država u kojoj je zabeležen slučaj.
+-   *age_group*: Starosna grupa kojoj pripada pacijent. Moguće vrednosti: `0-17 years`, `18-49 years`, `50-64 years`, `65+ years`.
+-   *sex*: Pol pacijenta.
+-   *race*: Rasa pacijenta.
+-   *case_positive_specimen_interval*: Broj nedelja između najranijeg datuma i datuma prikupljanja pozitivnog uzorka.
+-   *case_onset_interval*: Broj nedelja između najranijeg datuma i datuma pojave prvih simptoma.
+-   *current_status*: Indikator da li je laboratorijski potvrđeno da je pacijent oboleo od virusa *COVID-19*.
+-   *symptom_status*: Indikator prisustva simptoma. Moguće vrednosti: `Asymptomatic`, `Symptomatic`.
+-   *hosp_yn*: Indikator da li je pacijent bio hospitalizovan.
+-   *icu_yn*: Indikator da li je pacijent bio primljen u odeljenje intenzivne nege.
+-   *death_yn*: Indikator da li je nastupio smrtni ishod.
+-   *underlying_conditions_yn*: Indikator da li je pacijent bolovao od drugih bolesti.
+
+## Obrada podataka
+
+### Priprema podataka
+
+Pred samu analizu podataka, obavljeno je učitavanje i uređivanje podataka. Naime, u skupu podataka za nedostajuće vrednosti je primećeno nekonzistentno ponašanje, gde su se obeležavali simbolom `NA`, ili rečima *Unknown*, *Missing*. Ove vrednosti su zamenjene simbolom `NA`. Takođe, podaci su filtrirani da uključuju samo laboratorijski potvrđene slučajeve i podatke kod kojih nedostaju vrednosti vezane za vremensku odrednicu, starosnu grupu i saveznu državu pacijenta.
+
+```{r eval=F}
+sc <- spark_connect(master = "local")
+
+covid.raw <- spark_read_csv(sc, name="covid", path=".")
+
+covid.clean <- covid.raw %>%
+  mutate(across(c(where(is.character)), 
+    ~ if_else(. == "Unknown" || . == "Missing" || . == "NA", NA, .),
+    .names = "{col}"
+  ))
+
+covid.clean <- covid.clean %>%
+  filter(
+    !is.na(case_month) &
+    !is.na(age_group) &
+    !is.na(res_state) &
+    current_status == "Laboratory-confirmed case"
+  )
+```
+
+### Preliminarna analiza podataka
+
+#### Deskriptivne statistike
+
+Vrednosti deskriptivnih statistika su izračunata za obeležja *case_onset_interval* i *case_positive_specimen_interval.*
+
+```{r eval=F}
+sdf_describe(
+  covid.clean %>% filter(case_positive_specimen_interval >= 0 & case_onset_interval >= 0),
+  cols=c("case_positive_specimen_interval", "case_onset_interval")
+)
+```
+
+#### Vizualizovanje raspodele po pojedinačnim obeležjima
+
+Ovaj skup podataka je ima većinski kategorijska obeležja, zbog čega su za vizualizaciju raspodele pogotovo pogodni grafici tipa *pie* ili *bar*.
+
+##### Raspodela na osnovu pola pacijenata
+
+Priloženi grafik nam daje uvid u to da je bilo više pacijenata ženskog pola nego muškog, kao i da postoji mali broj podataka za koje je ova vrednost nedostajuća.
+
+```{r eval=F}
+ggplot(sex_data %>% collect(), aes(x = "", y = count, fill = sex)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  labs(
+    title = "Distribution of COVID-19 Cases by Sex",
+    fill = "Sex"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")
+  )
+```
+
+![](images/7-casesbysex-01.png)
+
+##### Raspodela na osnovu rase pacijenata
+
+Ovim grafikom uviđamo da je najveći broj pacijenata bio bele rase, što nije iznenađujuće s obzirom na demografiju SAD. Takođe, može se primetiti da je za značajan broj pacijenata ovaj podatak nezabeležen ili sakriven.
+
+```{r eval=F}
+ggplot(race_data %>% collect(), aes(x = "", y = count, fill = race)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  labs(
+    title = "Distribution of COVID-19 Cases by Race",
+    fill = "Race"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")
+  )
+```
+
+![](images/6-casesbyrace-01.png)
+
+##### Raspodela na osnovu starosne grupe pacijenata
+
+Priloženi grafik pokazuje da je bolest bila najčešća u pacijentima od 18 do 49 godina, što je i očekivano s obzirom na širi raspon godina.
+
+```{r eval=F}
+ggplot(age_group_cases_df, aes(x = reorder(age_group, -case_count), y = case_count)) +
+  geom_bar(stat = "identity") +
+  labs(title = "COVID-19 Cases by Age Group", x = "Age Group", y = "Number of Cases") +
+  theme_minimal() +
+  scale_x_discrete(limits = age_group_order) +
+  scale_y_continuous(labels = scales::comma)
+```
+
+![](images/1-casesbyagegroup-01.png)
+
+#### Ispitivanje odnosa između obeležja
+
+##### Odnos između starosne grupe i intenzivne nege
+
+Ovaj grafik jasno ukazuje na korelaciju između starosti i težine ishoda bolesti. Iako starosna grupa ljudi od preko 65 godina ima najmanji broj zabeleženih slučajeva, ima i najviše pacijenata koji su bili primljeni na intenzivnu negu. Nije mnogo drugačija situacija i sa drugom najstarijom starosnom grupom (od 50 do 64 godina). Pacijenata od 0 do 17 godina ima ukupno najmanje, i kod njih je bolest imala lakši ishod.
+
+```{r eval=F}
+ggplot(age_group_outcomes_df, aes(x = case_count, y = icu_count, label = age_group)) +
+  geom_point(size = 3) +
+  geom_text(vjust = -0.5, hjust = 0.5) +
+  labs(title = "COVID-19 Cases vs ICU admissions by Age Group", x = "Number of Cases", y = "Number of ICU admissions") +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_continuous(labels = scales::comma)
+```
+
+![](images/2-casesicuagegroup-01.png)
+
+##### Slučajevi kroz vreme u Kaliforniji
+
+Ovaj grafik pruža uvid u rast i pad broja novozabeleženih slučajeva u jednoj od saveznih država.
+
+![](images/3-casecaliforniatime-01.png)
+
+##### Ishod bolesti po starosnoj grupi i polu, procentualno
+
+Predstavljena su dva grafika koja prikazuju razliku u ishodu bolesti između žena i muškaraca, podeljeno po starosnoj grupi. Nešto veći broj muškaraca od žena se nalazi na oba ekstrema (asimptomatičnost i smrt). Očekivano, očekivana težina bolesti raste sa porastom godina pacijenta, gde je u starosnoj grupi od preko 65 godina najveći procenat pacijenata hospitalizovan. Sa druge strane, kod najmlađih je prisutan najveći procenat pacijenata bez simptoma.
+
+```{r eval=F}
+covid.outcome_summary <- covid.clean %>%
+  filter(
+    sex %in% c("Male", "Female") & 
+      hosp_yn %in% c("Yes", "No") &
+      death_yn %in% c("Yes", "No") &
+      symptom_status %in% c("Symptomatic", "Asymptomatic")
+  ) %>%
+  mutate(
+    outcome = case_when(
+      hosp_yn == "Yes" & death_yn != "Yes" ~ "Hospitalized",
+      death_yn == "Yes" ~ "Death",
+      symptom_status == "Asymptomatic" ~ "Asymptomatic",
+      symptom_status == "Symptomatic" & hosp_yn != "Yes" & death_yn != "Yes" & icu_yn != "Yes" ~ "Symptomatic, not severe",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  filter(outcome != "Other") %>%
+  group_by(age_group, sex, outcome)  %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(age_group, sex) %>%
+  mutate(percent = count / sum(count) * 100)
+
+covid.outcome_summary_df <- collect(covid.outcome_summary)
+
+ggplot(covid.outcome_summary_df, aes(x = age_group, y = percent, fill = outcome)) +
+  geom_bar(stat = "identity", position = "fill", color = "white") +
+  facet_wrap(~sex) +
+  labs(title = "COVID-19 Laboratory-Confirmed Case Outcome by Age Group and Sex",
+       x = "Age Group",
+       y = "Percentage",
+       fill = "Outcome") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  scale_x_discrete(limits = age_group_order) +
+  scale_y_continuous(labels = scales::comma)
+```
+
+![](images/4-outcomeagesex-01.png)
+
+##### Odnos između starosne grupe, pola i broja slučajeva
+
+Ovaj grafik prikazuje učestalost grupe pacijenata. Najveći broj pacijenata čine žene od 18 do 49 godina.
+
+```{r eval=F}
+ggplot(balloon_data %>% collect(), aes(x = age_group, y = sex, size = count, fill = count)) +
+  geom_point(shape = 21, color = "black") +
+  scale_size_continuous(range = c(1, 20), breaks = scales::pretty_breaks(n = 5), labels = scales::comma) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", labels = scales::comma) +
+  labs(
+    title = "Balloon Plot of COVID-19 Cases by Age Group and Sex",
+    x = "Age Group",
+    y = "Sex",
+    size = "Number of Cases",
+    fill = "Number of Cases"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )  
+```
+
+![](images/8-balloonagesex-01.png)
+
+##### Korelacija između starosne grupe, ishoda bolesti i ranijih bolesti
+
+Donji grafik predstavlja korelacionu matricu za starosnu grupu, hospitalizaciju, smrtni ishod, status simptoma i prisustvo ranijih bolesti, prikazujući time njihove međusobne odnose. Ističu se određene pozitivne korelacije:
+
+-   Starosna grupa i hospitalizacija: Korelacija je 0.5, što znači da je veća verovatnoća da će stariji pacijenti biti hospitalizovani.
+
+-   Starosna grupa i smrtni ishod: Korelacija je 0.52, ukazujući na to da stariji pacijenti imaju veću verovatnoću smrtnog ishoda.
+
+-   Hospitalizacija i smrtni ishod : Korelacija je 0.46, što znači da hospitalizovani pacijenti imaju veću verovatnoću smrtnog ishoda.
+
+```{r eval=F}
+covid.numeric <- covid.numeric %>%
+  select(
+    age_group_index,
+    hosp_yn_index,
+    death_yn_index,
+    symptom_status_index,
+    underlying_conditions_yn_index
+  ) %>%
+  na.omit()
+
+covid.correlation <- cor(covid.numeric %>% collect())
+
+corrplot(covid.correlation, method = "color", type = "upper", tl.col = "black", tl.srt = 45, addCoef.col = "black", number.cex = 0.7)
+```
+
+![](images/9-corrmatrix-01.png)
+
+### Klasifikacija
+
+#### Obeležja
+
+Za ciljno obeležje izabrano je `death_yn`, odnosno indikator smrtnog ishoda.
+
+Za prediktorska obeležja korišćeni su starosna grupa, pol, rasa, status simptoma, indikator hospitalizacije, indikator intenzivne nege i indikator postojećih bolesti.
+
+```{r eval=F}
+covid.class.formula <- death_yn ~ 
+  age_group +
+  sex +
+  race +
+  symptom_status +
+  underlying_conditions_yn +
+  hosp_yn + 
+  icu_yn
+```
+
+#### Metode klasifikacije
+
+Za metode klasifikacije izabrane su logistička regresija, stabla odlučivanja i mašina potpornih vektora. Svaki metod je testiran kroz promenu parametara:
+
+-   logistička regresija i mašina potpornih vektora: variranje parametara `threshold` (0.45, 0.5, 0.55) i `max_iter` (1, 3, 10);
+
+-   stabla odlučivanja: variranje parametara `min_instances_per_node` (1, 1000, 2000) i `max_depth` (3, 5, 20).
+
+Odrađeno je testiranje za svaku kombinaciju parametara, što čini ukupno devet scenarija.
+
+#### Validacija
+
+Primenjena je četvorostruka unakrsna validacija za svaki metod klasifikacije i svaku kombinaciju parametara.
+
+#### Performanse
+
+Za svaki metod klasifikacije i scenario, izračunate su tačnost, preciznost, osetljivost i *F1* skor, što omogućuje efikasno poređenje i uvid u najbolji izbor metoda i parametara.
+U priloženom kodu je primer implementacije jedne metode klasifikacije uz četvorostruku unakrsnu validaciju.
+
+```{r eval=F}
+k <- 4
+covid.split <- covid.patients %>%
+  sdf_random_split(seed=1,
+                   s1=0.25,
+                   s2=0.25,
+                   s3=0.25,
+                   s4=0.25)
+
+covid.training <- list(
+  s1 = sdf_bind_rows(covid.split$s2, covid.split$s3, covid.split$s4),
+  s2 = sdf_bind_rows(covid.split$s1, covid.split$s3, covid.split$s4),
+  s3 = sdf_bind_rows(covid.split$s1, covid.split$s2, covid.split$s4),
+  s4 = sdf_bind_rows(covid.split$s1, covid.split$s2, covid.split$s3)
+)
+
+covid.test <- list(
+  s1 = covid.split$s1,
+  s2 = covid.split$s2,
+  s3 = covid.split$s3,
+  s4 = covid.split$s4
+)
+```
+
+```{r eval=F}
+for(i in 1:1:length(iters)) {
+  covid.log.reg.trained = list(s1=ml_logistic_regression(covid.training$s1, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i]),
+                               s2=ml_logistic_regression(covid.training$s2, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i]),
+                               s3=ml_logistic_regression(covid.training$s3, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i]),
+                               s4=ml_logistic_regression(covid.training$s4, covid.class.formula, family="binomial", threshold=ths[i], max_iter = iters[i])
+  )
+  
+  covid.log.reg.eval.s1 <- ml_evaluate(covid.log.reg.trained$s1, covid.test$s1)
+  covid.log.reg.eval.s2 <- ml_evaluate(covid.log.reg.trained$s2, covid.test$s2)
+  covid.log.reg.eval.s3 <- ml_evaluate(covid.log.reg.trained$s3, covid.test$s3)
+  covid.log.reg.eval.s4 <- ml_evaluate(covid.log.reg.trained$s4, covid.test$s4)
+  
+  covid.log.reg.accuracy[[i]] <- (covid.log.reg.eval.s1$accuracy() + covid.log.reg.eval.s2$accuracy() + covid.log.reg.eval.s3$accuracy() + covid.log.reg.eval.s4$accuracy()) / k
+  covid.log.reg.prec[[i]] <- (covid.log.reg.eval.s1$weighted_precision() + covid.log.reg.eval.s2$weighted_precision() + covid.log.reg.eval.s3$weighted_precision() + covid.log.reg.eval.s4$weighted_precision()) / k
+  covid.log.reg.f1[[i]] <- (covid.log.reg.eval.s1$weighted_f_measure() + covid.log.reg.eval.s2$weighted_f_measure() + covid.log.reg.eval.s3$weighted_f_measure() + covid.log.reg.eval.s4$weighted_f_measure()) / k
+  covid.log.reg.recall[[i]] <- (covid.log.reg.eval.s1$weighted_recall() + covid.log.reg.eval.s2$weighted_recall() + covid.log.reg.eval.s3$weighted_recall() + covid.log.reg.eval.s4$weighted_recall()) / k
+}
+```
+
+
+##### Logistička regresija
+
+Na datim graficima je prikazana zavisnost tačnosti, preciznosti, osetljivosti i *F1* skora od broja iteracija i praga.
+
+Naime, najbolji rezultati su postignuti sa tri iteracije i pragovima 0.5 i 0.55, dok je najlošija u slučaju praga 0.45 i jedne maksimalne iteracije.
+
+```{r eval=F}
+ggplot(data, aes(x = iter, y = accuracy, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Logistic Regression Accuracy Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Accuracy",
+       color = "Threshold") +
+  theme_minimal()
+```
+
+```{r eval=F}
+ggplot(data, aes(x = iter, y = precision, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Logistic Regression Precision Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Precision",
+       color = "Threshold") +
+  theme_minimal()
+```
+
+```{r eval=F}
+ggplot(data, aes(x = iter, y = recall, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Logistic Regression Recall Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Recall",
+       color = "Threshold") +
+  theme_minimal()
+```
+
+```{r eval=F}
+ggplot(data, aes(x = iter, y = f1, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Logistic Regression F1 Measure Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "F1 Measure",
+       color = "Threshold") +
+  theme_minimal()
+```
+
+![](images/logregacc-01.png)
+
+![](images/logregprec-01.png)
+
+![](images/logregrecall-01.png)
+
+![](images/logregf1-01.png)
+
+##### Stabla odlučivanja
+
+Na datim graficima je prikazana zavisnost tačnosti, preciznosti, osetljivosti i *F1* skora od maksimalne dubine stabla i minimalnog broja instanci po čvoru. Najbolje performanse su postignute podešavanjem minimalnog broja instanci po čvoru na 1, i broja iteracija na 5.
+
+```{r eval=F}
+ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(3, 5, 20)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Decision Tree Accuracy Over Min Instances Per Node and Max Depth",
+       x = "Depth", 
+       y = "Accuracy",
+       color = "Min Instances Per Node") +
+  theme_minimal()
+```
+
+```{r eval=F}
+ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(3, 5, 20)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Decision Tree Precision Over Min Instances Per Node and Max Depth",
+       x = "Depth", 
+       y = "Precision",
+       color = "Min Instances Per Node") +
+  theme_minimal()
+```
+
+```{r eval=F}
+ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(3, 5, 20)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Decision Tree Recall Over Min Instances Per Node and Max Depth",
+       x = "Depth", 
+       y = "Recall",
+       color = "Min Instances Per Node") +
+  theme_minimal()
+```
+
+```{r eval=F}
+ggplot(data, aes(x = depth, y = accuracy, color = as.factor(inst))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(3, 5, 20)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Decision Tree F1 Measure Over Min Instances Per Node and Max Depth",
+       x = "Depth", 
+       y = "F1 Measure",
+       color = "Min Instances Per Node") +
+  theme_minimal()
+```
+
+![](images/dectreeacc.png)
+
+![![](images/dectreerecall-01.png)](images/dectreeprec-01.png)
+
+![](images/dectreef1-02.png)
+
+##### Mašina potpornih vektora
+
+Na datim graficima je prikazana zavisnost tačnosti, preciznosti, osetljivosti i *F1* skora od broja iteracija i praga.
+
+Najbolja tačnost je u scenariju od 10 iteracija i pragova 0.55 ili 0.45, dok je preciznost bila bolja sa jednom iteracijom i pragom 0.5. Osetljivost je bolja sa 3 ili 10 maksimalnih iteracija, a *F1* skor je bio najbolji sa 10 maksimalnih iteracija.
+
+```{r eval=F}
+data <- data.frame(iter = iters, th = ths, accuracy = unlist(covid.svm.accuracy), precision = unlist(covid.svm.prec), recall = unlist(covid.svm.recall), f1 = unlist(covid.svm.f1))
+ggplot(data, aes(x = iter, y = accuracy, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Support Vector Machine Accuracy Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Accuracy",
+       color = "Threshold") +
+  theme_minimal()
+```
+
+```{r eval=F}
+ggplot(data, aes(x = iter, y = precision, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Support Vector Machine Precision Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Precision",
+       color = "Threshold") +
+  theme_minimal()
+```
+
+```{r eval=F}
+ggplot(data, aes(x = iter, y = recall, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Support Vector Machine Recall Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "Recall",
+       color = "Threshold") +
+  theme_minimal()
+```
+
+```{r eval=F}
+ggplot(data, aes(x = iter, y = f1, color = as.factor(th))) +
+  geom_point(size=4, position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  scale_x_continuous(breaks = c(1, 3, 10)) +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  labs(title = "Support Vector Machine F1 Measure Over Iterations and Thresholds",
+       x = "Iteration", 
+       y = "F1 Measure",
+       color = "Threshold") +
+  theme_minimal()
+```
+
+![](images/svmacc.png)
+
+![![](images/svmrecall.png)](images/svmprec.png)
+
+![](images/svmf1-01.png)
+
+Ukupno, najbolje rezultate po svim parametrima daje logistička regresija sa tri iteracije i pragovima 0.5 ili 0.55.
+
+### Klasterizacija
+
+Za klasterizaciju je odabrana metoda *K-Means*. Ispitana su dva scenarija: sa 4 klastera i jednom maksimalnom iteracijom, i sa 7 klastera i 3 maksimalne iteracije.
+
+Cilj klasterizacije je ispitivanje odnosa broja smrti i starosne grupe pacijenta.
+
+##### Priprema podataka
+
+```{r eval=F}
+covid.clustering.data <- covid.clean %>%
+  mutate(age_group_index = case_when(
+    age_group == "0 - 17 years" ~ 0,
+    age_group == "18 to 49 years" ~ 1,
+    age_group == "50 to 64 years"~ 2,
+    age_group == "65+ years" ~ 3,
+    TRUE ~ NA_real_
+  )) %>%
+  select(age_group_index, sex, race, case_month, res_state, death_yn) %>%
+  na.omit()
+
+covid.clustering.data <- covid.clustering.data %>%
+  group_by(age_group_index, sex, case_month, res_state, race) %>%
+  summarise(death_count = sum(ifelse(death_yn == TRUE, 1, 0), na.rm = TRUE), .groups = "keep")
+```
+
+##### K-Means, `k = 7`, `max_iter = 3`
+
+```{r eval=F}
+covid.clustering.data.kmeans <- covid.clustering.data %>% 
+  ml_kmeans(~ age_group_index + death_count, 
+            k = 7, 
+            max_iter = 3, 
+            init_mode = "k-means||")
+```
+
+Na grafiku ispod su prikazani dobijeni klasteri sa svojim centrima. Može se uočiti broj umrlih raste sa povećanjem starosne grupe.
+
+```{r eval=F}
+cluster.centers.df <- data.frame(covid.clustering.data.kmeans$centers)
+ggplot(data = covid.clustering.data,
+       aes(x = age_group_index, y = death_count, colour = clust)) +
+  geom_jitter(size = 1) +
+  geom_point(data = cluster.centers.df,
+             color = "black",
+             size = 2,
+             shape = 0 )+
+  theme_minimal() +
+  labs(
+    y = "Death Count",
+    x = "Age Group Index",
+    color = "Cluster"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_continuous(labels = scales::comma) +
+  scale_color_manual(values = c("hotpink", "deepskyblue", "darkorchid1", "darkolivegreen2", "red", "orange", "green")) 
+
+```
+
+![](images/kmeansk7iter3.png)
+
+Strukturu klastera možemo dodatno analizirati na osnovu sledećih grafika koji prikazuju prosečnu starost i prosečnu smrtnost po klasteru.
+
+```{r eval=F}
+cluster_analysis <- covid.clustering.data %>%
+  group_by(clust) %>%
+  summarise(
+    avg_death_count = mean(death_count, na.rm = TRUE),
+    avg_age_group_index = mean(age_group_index, na.rm = TRUE),
+    count = n()
+  )
+```
+
+```{r eval=F}
+ggplot(cluster_analysis, aes(x = clust, y = avg_age_group_index, fill = clust)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Average Age Group Index per Cluster",
+       x = "Cluster",
+       y = "Average Age Group Index") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = c("hotpink", "deepskyblue", "darkorchid1", "darkolivegreen2", "red", "orange", "green"))
+```
+
+```{r eval=F}
+ggplot(cluster_analysis, aes(x = clust, y = avg_death_count, fill = clust)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Average Death Count per Cluster",
+       x = "Cluster",
+       y = "Average Death Count") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = c("hotpink", "deepskyblue", "darkorchid1", "darkolivegreen2", "red", "orange", "green"))
+```
+
+![](images/avgagegroup.png)
+
+![](images/avgdeathcount.png)
+
+Na osnovu ovih grafika, možemo uočiti očigledne grupe pacijenata, zavisno od kombinacije godina i smrtnosti. Naime, ističe se drugi klaster koji ima najveću stopu smrtnosti i najveću prosečnu starost, kao i nulti klaster koji ima najmanju stopu smrtnosti i najmanju prosečnu starost.
+
+Raspodela entiteta po klasterima je prikazana na sledećem grafiku.
+
+```{r eval=F}
+ggplot(cluster_analysis, aes(x = clust, y = count, fill = clust)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("hotpink", "deepskyblue", "darkorchid1", "darkolivegreen2", "red", "orange", "green")) +
+  labs(title = "Number of Entities per Cluster",
+       x = "Cluster",
+       y = "Number of Entities") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+![](images/npercluster.png)
+
+##### K-Means, `k = 4`, `max_iter = 1`
+
+```{r eval=F}
+covid.clustering.data.kmeans <- covid.clustering.data %>% 
+  ml_kmeans(~ age_group_index + death_count, 
+            k = 4, 
+            max_iter = ``, 
+            init_mode = "k-means||")
+```
+
+Na grafiku ispod su prikazani dobijeni klasteri sa svojim centrima. Slično kao i ranije, može se uočiti porast broja umrlih sa porastom starosti.
+
+![](images/clusters.png)
+
+Strukturu klastera možemo videti detaljinije na osnovu sledećih grafika.
+
+![![](images/avgdeathcount-01.png)](images/avggroupindex.png)
+
+Vidimo jasno izdvojene grupe pacijenata:
+
+-   0: Mlađi pacijenti (0-65), sa neznatno malom stopom smrtnosti;
+
+-   1: Stariji pacijenti (65+), sa srednjom stopom smrtnosti;
+
+-   2: Stariji pacijenti (65+) sa značajno većom stopom smrtnosti;
+
+-   3: Sredovečni i stariji pacijenti sa malom stopom smrtnosti.
+
+Raspodela entiteta po klasterima je prikazana na sledećem grafiku. Većina entiteta pripada nultom klasteru, što ima smisla znajući sve ostalo što je otkriveno tokom dosadašnje analize: najveći broj pacijenata je starosti od 0 do 65 godina, i najveći broj pacijenata nije doživeo smrtni ishod.
+
+![](images/npercluster-01.png)
+
+## Zaključak
+
+U toku ovog rada izvršena je obrada velikog skupa podataka na različite načine u cilju prikupljanja dodatnog znanja. Izložene su osobine korišćenog skupa podataka i tehnologija, i ispitivane su raspodele vrednosti po obeležjima i odnosi između njih, ukazujući pritom na jaku zavisnost između pojedinih osobina. Prikazano je i kako uspešnost analize može značajno da zavisi od izabrane metode, kao i njenih parametara.
